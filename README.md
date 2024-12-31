@@ -28,7 +28,7 @@
 > <br>
 
 ## Introduction
-CreatiLayout is a layout-to-image framework for Diffusion Transformer models, offring high-quality and fine-grained controllable generation.
+CreatiLayout is a layout-to-image framework for Diffusion Transformer models, offering high-quality and fine-grained controllable generation.
 
 **LayoutSAM Dataset** 📚: A large-scale layout dataset with 2.7 million image-text pairs and 10.7 million entities, featuring fine-grained annotations for open-set entities.
 
