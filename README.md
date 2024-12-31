@@ -73,7 +73,7 @@ To evaluate the model's layout-to-image generation capabilities through LayoutSA
 ```python
 python test_layoutsam_benchmark.py
 ```
-Then perform visual question answering for each image by running the following code:
+Then, visual language models (VLM) are used to answer visual questions. This will assess each image's adherence to spatial and attribute specifications. You can do this by using the following code:
 ```python
 python score_layoutsam_benchmark.py
 ```
