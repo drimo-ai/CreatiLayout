@@ -8,7 +8,7 @@ from dataset.layoutsam_benchmark import BboxDataset
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 if __name__ == "__main__":
-    model_id ="/mnt/bn/zhanghui-lq/ai_product_models/MiniCPM-V-2_6"
+    model_id ="openbmb/MiniCPM-V-2_6"
     model = AutoModel.from_pretrained(model_id, trust_remote_code=True,
     attn_implementation='sdpa', torch_dtype=torch.bfloat16) # sdpa or flash_attention_2, no eager
     model = model.eval().cuda()
