@@ -21,14 +21,14 @@ if __name__ == "__main__":
     test_dataset = BboxDataset(test_dataset)
     test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=1)
 
-    generate_path = "/mnt/bn/zhanghui-lq/sd3_layout/logs/trained-sd3-layout-fullyMMDiT-bboxUpdate-ZeroModule-afterGatemsa-bs16_bloss*2_ddpm_biasdT-bf16-detail-traincopy-10.24-2.7M/checkpoint-670000/sa-1b-benchmark-final_DetailRegion_seed42_wholeprocess/images"   # modify it 
+    generate_path = "output/layoutSAM-eval/images"   
     print("processing:",generate_path)
 
     save_json_path = generate_path.replace("images", "minicpm-vqa.json")
     temp_root = generate_path.replace("images", "images-perarea")
     os.makedirs(temp_root, exist_ok=True)  #
 
-    resolution= 1024 # modify it 
+    resolution= 1024 
     # Dictionary to store the count and scores for each image
     image_stats = {}
     for i, batch in enumerate(tqdm(test_dataloader)):
