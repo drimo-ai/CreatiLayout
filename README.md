@@ -36,6 +36,11 @@ CreatiLayout is a layout-to-image framework for Diffusion Transformer models, of
 
 **Layout Designer** 🎨: A layout planner leveraging the power of large language models to convert various user inputs (e.g., center points, masks, scribbles) into standardized layouts. 
 
+## 🔥 News
+- **2025-1-30**: We propose **CreatiLayout-LoRA**, which achieves layout control with fewer additional parameters.
+
+
+
 ## Quick Start
 ### Setup
 1. **Environment setup**
