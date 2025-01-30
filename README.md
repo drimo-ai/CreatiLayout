@@ -28,13 +28,18 @@
 > <br>
 
 ## Introduction
-CreatiLayout is a layout-to-image framework for Diffusion Transformer models, offring high-quality and fine-grained controllable generation.
+CreatiLayout is a layout-to-image framework for Diffusion Transformer models, offering high-quality and fine-grained controllable generation.
 
 **LayoutSAM Dataset** 📚: A large-scale layout dataset with 2.7 million image-text pairs and 10.7 million entities, featuring fine-grained annotations for open-set entities.
 
 **SiamLayout** 🌟: A novel layout integration network for MM-DiT treats the layout as an independent modality with its own set of transformer parameters, allowing the layout to play an equally important role as the global description in guiding the image.
 
 **Layout Designer** 🎨: A layout planner leveraging the power of large language models to convert various user inputs (e.g., center points, masks, scribbles) into standardized layouts. 
+
+## 🔥 News
+- **2025-1-30**: We propose **CreatiLayout-LoRA**, which achieves layout control with fewer additional parameters.
+
+
 
 ## Quick Start
 ### Setup
@@ -73,7 +78,7 @@ To evaluate the model's layout-to-image generation capabilities through LayoutSA
 ```python
 python test_layoutsam_benchmark.py
 ```
-Then perform visual question answering for each image by running the following code:
+Then, visual language models (VLM) are used to answer visual questions. This will assess each image's adherence to spatial and attribute specifications. You can do this by using the following code:
 ```python
 python score_layoutsam_benchmark.py
 ```

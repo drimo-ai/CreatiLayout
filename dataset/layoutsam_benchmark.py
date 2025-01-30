@@ -45,6 +45,7 @@ class BboxDataset(Dataset):
         region_bboxes_list = np.array(region_bboxes_list, dtype=np.float32)
     
         region_caption_list = ast.literal_eval(region_caption_list)
+        detail_region_caption_list = ast.literal_eval(detail_region_caption_list)
         
         return {
             'image': image,

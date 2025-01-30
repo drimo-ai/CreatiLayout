@@ -8,7 +8,7 @@ from dataset.layoutsam_benchmark import BboxDataset
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 if __name__ == "__main__":
-    model_id ="/mnt/bn/zhanghui-lq/ai_product_models/MiniCPM-V-2_6"
+    model_id ="openbmb/MiniCPM-V-2_6"
     model = AutoModel.from_pretrained(model_id, trust_remote_code=True,
     attn_implementation='sdpa', torch_dtype=torch.bfloat16) # sdpa or flash_attention_2, no eager
     model = model.eval().cuda()
@@ -36,8 +36,6 @@ if __name__ == "__main__":
         detial_region_caption_list = [t[0] for t in batch["detail_region_caption_list"]]
         region_caption_list = [t[0] for t in batch["region_caption_list"]]
         region_bboxes_list = batch["region_bboxes_list"][0]
-        from IPython.core.debugger import set_trace 
-        set_trace()
         filename = batch["file_name"][0]
 
         generated_img = os.path.join(generate_path,filename)
@@ -132,10 +130,10 @@ if __name__ == "__main__":
                     score_shape = 1.0
   
             # Update total scores
-            total_score_spatial += score_spatial
-            total_score_color += score_color
-            total_score_texture += score_texture
-            total_score_shape += score_shape
+            img_score_spatial += score_spatial
+            img_score_color += score_color
+            img_score_texture += score_texture
+            img_score_shape += score_shape
             
             
         # Store image stats
