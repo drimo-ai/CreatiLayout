@@ -8,7 +8,7 @@ from dataset.layoutsam_benchmark import BboxDataset
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 if __name__ == "__main__":
-    model_id ="openbmb/MiniCPM-V-2_6"
+    model_id ="/mnt/bn/zhanghui-lq/ai_product_models/MiniCPM-V-2_6"
     model = AutoModel.from_pretrained(model_id, trust_remote_code=True,
     attn_implementation='sdpa', torch_dtype=torch.bfloat16) # sdpa or flash_attention_2, no eager
     model = model.eval().cuda()
@@ -21,14 +21,14 @@ if __name__ == "__main__":
     test_dataset = BboxDataset(test_dataset)
     test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=1)
 
-    generate_path = "output/layoutSAM-eval/images"   
+    generate_path = "/mnt/bn/zhanghui-lq/sd3_layout/logs/trained-flux-layout-ZeroMo-aftermsa-bs16-traincopy-biasedT-boxloss-negboxid-double-single-all-detail-v3-512-2.5-guide3.5-2.7M/checkpoint-330000/sa-1b-benchmark-final_DetailRegion_seed42_0.3process_newpipeline_newneg/images"   
     print("processing:",generate_path)
 
     save_json_path = generate_path.replace("images", "minicpm-vqa.json")
     temp_root = generate_path.replace("images", "images-perarea")
     os.makedirs(temp_root, exist_ok=True)  #
 
-    resolution= 1024 
+    resolution= 512
     # Dictionary to store the count and scores for each image
     image_stats = {}
     for i, batch in enumerate(tqdm(test_dataloader)):

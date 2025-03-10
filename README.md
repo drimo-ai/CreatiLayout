@@ -14,7 +14,7 @@
 
 > **CreatiLayout: Siamese Multimodal Diffusion Transformer for Creative Layout-to-Image Generation**
 > <br>
-> [Hui Zhang](https://scholar.google.com/citations?user=PM0wt9wAAAAJ&hl=zh-CN), 
+> [Hui Zhang](https://huizhang0812.github.io/), 
 > [Dexiang Hong](https://scholar.google.com.hk/citations?user=DUNijlcAAAAJ&hl=zh-CN), 
 > Tingwei Gao, 
 > [Yitong Wang](https://scholar.google.com/citations?user=NfFTKfYAAAAJ&hl=zh-CN),
@@ -37,6 +37,7 @@ CreatiLayout is a layout-to-image framework for Diffusion Transformer models, of
 **Layout Designer** 🎨: A layout planner leveraging the power of large language models to convert various user inputs (e.g., center points, masks, scribbles) into standardized layouts. 
 
 ## 🔥 News
+- **2025-3-10**: We release **CreatiLayout-FLUX**, which empowers FLUX.1-dev for layout-to-image generation and achieves more precise rendering of spatial relationships and attributes.
 - **2025-1-30**: We propose **CreatiLayout-LoRA**, which achieves layout control with fewer additional parameters.
 
 
@@ -76,7 +77,7 @@ LayoutSAM-Eval is a comprehensive benchmark for evaluating the quality of Layout
 
 To evaluate the model's layout-to-image generation capabilities through LayoutSAM-Eval, first you need to generate images for each data in the benchmark by running the following code:
 ```python
-python test_layoutsam_benchmark.py
+python test_SiamLayout_sd3_layoutsam_benchmark.py
 ```
 Then, visual language models (VLM) are used to answer visual questions. This will assess each image's adherence to spatial and attribute specifications. You can do this by using the following code:
 ```python
@@ -88,9 +89,9 @@ python score_layoutsam_benchmark.py
 **Layout-to-Image generation:**
 | Model   | Base model    |  Description  |
 | ------------------------------------------------------------------------------------------------ | -------------- | -------------------------------------------------------------------------------------------------------- |
-| <a href="https://huggingface.co/HuiZhang0812/CreatiLayout"><img src="https://img.shields.io/badge/🤗_HuggingFace-Model-ffbd45.svg" alt="HuggingFace"></a> | Stable Diffusion 3 | Model used in the paper
-
-
+| <a href="https://huggingface.co/HuiZhang0812/CreatiLayout"><img src="https://img.shields.io/badge/🤗_HuggingFace-Model-ffbd45.svg" alt="HuggingFace"></a> | Stable Diffusion 3 | SiamLayout-SD3 used in the paper
+| <a href="https://huggingface.co/HuiZhang0812/CreatiLayout"><img src="https://img.shields.io/badge/🤗_HuggingFace-Model-ffbd45.svg" alt="HuggingFace"></a> | Stable Diffusion 3 | SiamLayout-SD3-LoRA used in the paper
+| <a href="https://huggingface.co/HuiZhang0812/CreatiLayout"><img src="https://img.shields.io/badge/🤗_HuggingFace-Model-ffbd45.svg" alt="HuggingFace"></a> | FLUX.1-dev | SiamLayout-FLUX used in the paper
 
 ## ✒️ Citation
 

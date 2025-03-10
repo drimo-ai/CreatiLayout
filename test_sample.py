@@ -3,7 +3,7 @@ import os
 from utils.bbox_visualization import bbox_visualization,scale_boxes
 from PIL import Image
 from src.models.transformer_sd3_SiamLayout import SiamLayoutSD3Transformer2DModel
-from src.pipeline.pipeline_CreatiLayout import CreatiLayoutSD3Pipeline
+from src.pipeline.pipeline_sd3_CreatiLayout import CreatiLayoutSD3Pipeline
 
 if __name__ == "__main__":
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -11,9 +11,9 @@ if __name__ == "__main__":
     ckpt_path = "HuiZhang0812/CreatiLayout"
     transformer_additional_kwargs = dict(attention_type="layout",strict=True)
     transformer = SiamLayoutSD3Transformer2DModel.from_pretrained(
-         ckpt_path, subfolder="transformer", torch_dtype=torch.float16,**transformer_additional_kwargs)
+         ckpt_path, subfolder="SiamLayout_SD3", torch_dtype=torch.float16,**transformer_additional_kwargs)
     pipe = CreatiLayoutSD3Pipeline.from_pretrained(model_path, transformer=transformer, torch_dtype=torch.float16)
-    pipe = pipe.to("cuda")
+    pipe = pipe.to(device)
 
     seed = 42
     batch_size = 1
@@ -48,7 +48,7 @@ if __name__ == "__main__":
 
     with torch.no_grad():
         images = pipe(prompt = global_caption*batch_size,
-                    generator = torch.Generator(device="cuda").manual_seed(seed),
+                    generator = torch.Generator(device=device).manual_seed(seed),
                     num_inference_steps = num_inference_steps,
                     guidance_scale = guidance_scale,
                     bbox_phrases = region_caption_list, 

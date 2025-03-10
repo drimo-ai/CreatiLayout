@@ -29,7 +29,8 @@ def draw_mask(mask, draw, random_color=True):
 def bbox_visualization(image_pil: Image,
               result: Dict,
               draw_width: float = 6.0,
-              return_mask=True) -> Image:
+              return_mask=True,
+              font_size=30) -> Image:
     """Plot bounding boxes and labels on an image.
 
     Args:
@@ -66,7 +67,7 @@ def bbox_visualization(image_pil: Image,
         cate2color[cate] = color_list[idx%len(color_list)]
     
     # Load a font with the specified size
-    font_size=30
+    font_size = font_size
     font = ImageFont.truetype("utils/arial.ttf", font_size)
     
     # Create a PIL ImageDraw object to draw on the input image

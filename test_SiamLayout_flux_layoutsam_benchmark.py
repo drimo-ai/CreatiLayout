@@ -6,30 +6,29 @@ from tqdm import tqdm
 from IPython.core.debugger import set_trace 
 from utils.bbox_visualization import bbox_visualization,scale_boxes
 from PIL import Image
-from src.models.transformer_sd3_SiamLayout_lora import SiamLayoutSD3Transformer2DModel
-from src.pipeline.pipeline_CreatiLayout import CreatiLayoutSD3Pipeline
+from src.models.transformer_flux_SiamLayout import FluxTransformer2DModel
+from src.pipeline.pipeline_flux_CreatiLayout import CreatiLayoutFluxPipeline
 from dataset.layoutsam_benchmark import BboxDataset
 from datasets import load_dataset
-from safetensors.torch import load_file
-from huggingface_hub import hf_hub_download
 
 if __name__ == "__main__":
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model_path = "stabilityai/stable-diffusion-3-medium-diffusers"
+    model_path = "/mnt/bn/zhanghui-lq/ai_product_models/FLUX.1-dev"
+    ckpt_path = "HuiZhang0812/CreatiLayout"
     dataset_path = "HuiZhang0812/LayoutSAM-eval"
-    transformer_additional_kwargs = dict(attention_type="layout",strict=False,device_map=None,low_cpu_mem_usage=False)
-    transformer = SiamLayoutSD3Transformer2DModel.from_pretrained(
-         model_path, subfolder="transformer", torch_dtype=torch.float16,**transformer_additional_kwargs)
-    
-    ckpt_path = "HuiZhang0812/CreatiLayout_lora"
-    safetensors_path = hf_hub_download(
-        repo_id=ckpt_path,
-        filename="transformer/model.safetensors"
-    )
-    lora_state_dict = load_file(safetensors_path)
-    missing_keys, unexpected_keys = transformer.load_state_dict(lora_state_dict, strict=False)
-    pipe = CreatiLayoutSD3Pipeline.from_pretrained(model_path, transformer=transformer, torch_dtype=torch.float16)
-    pipe = pipe.to("cuda")
+    transformer_additional_kwargs = dict(
+        attention_type="layout",
+        double_blocks_index=[i for i in range(0,19,1)],  
+        single_blocks_index=[i for i in range(0,38,1)],  
+        is_add=True,
+        max_boxes_token_length=30,
+        fix_bbox_ids=True,
+        strict=True
+        )
+    transformer = FluxTransformer2DModel.from_pretrained(
+         ckpt_path, subfolder="SiamLayout_FLUX", torch_dtype=torch.bfloat16,**transformer_additional_kwargs)
+    pipe = CreatiLayoutFluxPipeline.from_pretrained(model_path, transformer=transformer, torch_dtype=torch.bfloat16)
+    pipe = pipe.to(device)
 
     test_dataset = load_dataset(dataset_path, split='test')
     test_dataset = BboxDataset(test_dataset)
@@ -38,10 +37,9 @@ if __name__ == "__main__":
     seed = 42
     batch_size = 1
     num_inference_steps = 50
-    height = 1024
-    width = 1024
-
-    save_root = "output/layoutSAM-eval-lora"
+    height = 512
+    width = 512
+    save_root = "output/layoutSAM-eval-SiamLayout-FLUX"
     img_save_root = os.path.join(save_root,"images")
     os.makedirs(img_save_root,exist_ok=True)
     img_with_layout_save_root = os.path.join(save_root,"images_with_layout")
@@ -56,7 +54,7 @@ if __name__ == "__main__":
         filename = batch["file_name"][0]
         with torch.no_grad():
             images = pipe(prompt = global_caption*batch_size,
-                        generator = torch.Generator(device="cuda").manual_seed(seed),
+                        generator = torch.Generator(device=device).manual_seed(seed),
                         num_inference_steps = num_inference_steps,
                         bbox_phrases = region_caption_list, 
                         bbox_raw = region_bboxes_list,
@@ -72,8 +70,8 @@ if __name__ == "__main__":
         white_image = Image.new('RGB', (width, height), color='rgb(256,256,256)')
         show_input = {"boxes":scale_boxes(region_bboxes_list,width,height),"labels":region_caption_list}
 
-        bbox_visualization_img = bbox_visualization(white_image,show_input)
-        image_with_bbox = bbox_visualization(image ,show_input)
+        bbox_visualization_img = bbox_visualization(white_image,show_input,font_size=15)
+        image_with_bbox = bbox_visualization(image ,show_input,font_size=15)
 
         total_width = width*2
         total_height = height
