@@ -13,7 +13,7 @@ from datasets import load_dataset
 
 if __name__ == "__main__":
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model_path = "/mnt/bn/zhanghui-lq/ai_product_models/FLUX.1-dev"
+    model_path = "black-forest-labs/FLUX.1-dev"
     ckpt_path = "HuiZhang0812/CreatiLayout"
     dataset_path = "HuiZhang0812/LayoutSAM-eval"
     transformer_additional_kwargs = dict(
