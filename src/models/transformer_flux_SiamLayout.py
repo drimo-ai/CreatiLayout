@@ -527,7 +527,7 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
         self.time_text_embed = text_time_guidance_cls(
             embedding_dim=self.inner_dim, pooled_projection_dim=self.pooled_projection_dim
         )
-
+        print(f"FluxTransforer2DModel joint_attention_dim: {self.joint_attention_dim}, inner_dim: {self.inner_dim}")
         self.context_embedder = nn.Linear(self.joint_attention_dim, self.inner_dim)
         self.x_embedder = nn.Linear(self.in_channels, self.inner_dim)
 
@@ -689,32 +689,8 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
         bbox_scale =1.0,
         bbox_ids: torch.Tensor = None,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
-        """
-        The [`FluxTransformer2DModel`] forward method.
 
-        Args:
-            hidden_states (`torch.FloatTensor` of shape `(batch size, channel, height, width)`):
-                Input `hidden_states`.
-            encoder_hidden_states (`torch.FloatTensor` of shape `(batch size, sequence_len, embed_dims)`):
-                Conditional embeddings (embeddings computed from the input conditions such as prompts) to use.
-            pooled_projections (`torch.FloatTensor` of shape `(batch_size, projection_dim)`): Embeddings projected
-                from the embeddings of input conditions.
-            timestep ( `torch.LongTensor`):
-                Used to indicate denoising step.
-            block_controlnet_hidden_states: (`list` of `torch.Tensor`):
-                A list of tensors that if specified are added to the residuals of transformer blocks.
-            joint_attention_kwargs (`dict`, *optional*):
-                A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
-                `self.processor` in
-                [diffusers.models.attention_processor](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~models.transformer_2d.Transformer2DModelOutput`] instead of a plain
-                tuple.
-
-        Returns:
-            If `return_dict` is True, an [`~models.transformer_2d.Transformer2DModelOutput`] is returned, otherwise a
-            `tuple` where the first element is the sample tensor.
-        """
+   
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
             lora_scale = joint_attention_kwargs.pop("scale", 1.0)
@@ -729,7 +705,7 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
                 logger.warning(
                     "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
                 )
-
+        print("hidden_states type",hidden_states.dtype)
         hidden_states = self.x_embedder(hidden_states)
 
         timestep = timestep.to(hidden_states.dtype) * 1000
@@ -744,6 +720,21 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
             else self.time_text_embed(timestep, guidance, pooled_projections)
         )
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
+
+        # pulid input
+        if 'id_embeddings' in joint_attention_kwargs and joint_attention_kwargs['id_embeddings'] is not None:
+            id_embeddings = joint_attention_kwargs['id_embeddings']
+            id_masks = []
+            for id_mask in joint_attention_kwargs['id_masks']:
+                id_masks.append(id_mask[None, :, None].repeat(hidden_states.shape[0], 1, hidden_states.shape[-1]).to(
+                    device=hidden_states.device, dtype=hidden_states.dtype))
+            id_weights = joint_attention_kwargs['id_weights']
+            ca_idx = 0
+        else:
+            id_embeddings = None
+            id_masks = None
+            id_weights = 0.0
+            ca_idx = 0
 
         if txt_ids.ndim == 3:
             # logger.warning(
@@ -768,10 +759,13 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
             layout_args = layout_kwargs["layout"]
             bbox_raw = layout_args["boxes"].to(dtype=hidden_states.dtype, device=hidden_states.device) # [B,10,4]
             bbox_text_embeddings = layout_args["positive_embeddings"].to(dtype=hidden_states.dtype, device=hidden_states.device) #[B,10,77,4096]
-            bbox_text_embeddings = self.context_embedder(bbox_text_embeddings) # [B,10,77,1536]
+            print(f"bbox_text_embeddings: {bbox_text_embeddings.shape}")
+            bbox_text_embeddings = self.context_embedder(bbox_text_embeddings) # [B,10,77,3072]
+            print(f"bbox_text_embeddings: {bbox_text_embeddings.shape}")
             bbox_text_embeddings = bbox_text_embeddings[:,:,:self.max_boxes_token_length,:]# [B,10,30,1536]
             bbox_masks = layout_args["bbox_masks"].to(dtype=hidden_states.dtype, device=hidden_states.device) # [B,10]
             bbox_hidden_states = self.position_net(boxes=bbox_raw,masks=bbox_masks,positive_embeddings=bbox_text_embeddings) # "bbox": torch.Size([B, 300, 1536])
+            print(f"bbox_hidden_states: {bbox_hidden_states.shape},bbox_masks: {bbox_masks.shape}")
 
             #bbox_ids固定为0
             if self.fix_bbox_ids:
@@ -833,6 +827,8 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
                 )
 
             else:
+                print(
+                    f"double transformer input hidden_states: {hidden_states.shape} bbox_hidden_states: {bbox_hidden_states.shape}")
                 encoder_hidden_states, hidden_states, bbox_hidden_states = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
@@ -842,9 +838,20 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
                     image_rotary_emb_for_bbox=image_rotary_emb_for_bbox,
                     bbox_scale=bbox_scale,
                     joint_attention_kwargs=joint_attention_kwargs
-
-
                 )
+                print(f"double transformer output hidden_states: {hidden_states.shape} bbox_hidden_states: {bbox_hidden_states.shape}")
+
+                print(f"id_weights",id_weights)
+                if id_embeddings is not None and index_block % self.pulid_double_interval == 0:
+                    for id_weight, id_embedding, id_mask in zip(id_weights, id_embeddings, id_masks):
+                        print(f"----------pulid ca id_weight:{id_weight}, id_mask:{type(id_mask)}")
+                        print(f"id_embedding shape:{id_embedding.shape} hidden_states shape:{hidden_states.shape}, id_mask shape:{id_mask.shape}")
+                        
+                        pulid_states = id_weight[0] * self.pulid_ca[ca_idx](id_embedding, hidden_states) * id_mask
+                        print(f"double transformer pulid_states shape:{pulid_states.shape}")
+                        hidden_states = hidden_states + pulid_states
+                    ca_idx += 1
+
 
             # controlnet residual
             if controlnet_block_samples is not None:
@@ -860,7 +867,9 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
         #single
         bbox_end_index = bbox_hidden_states.shape[1]
         txt_end_index = encoder_hidden_states.shape[1]
+        print(f"cat encoder_hidden_states before hidden_states: {hidden_states.shape} ")
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
+        print(f"cat encoder_hidden_states after hidden_states: {hidden_states.shape} ")
         for index_block, block in enumerate(self.single_transformer_blocks):
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 def create_custom_forward(module, return_dict=None):
@@ -886,6 +895,8 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
                     **ckpt_kwargs,
                 )
             else:
+                print(
+                    f"single transformer input hidden_states: {hidden_states.shape} bbox_hidden_states: {bbox_hidden_states.shape}")
                 hidden_states,bbox_hidden_states = block(
                     hidden_states=hidden_states,
                     bbox_hidden_states = bbox_hidden_states,
@@ -897,8 +908,26 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
                     txt_end_index = txt_end_index,
                     joint_attention_kwargs=joint_attention_kwargs,
                 )
+                print(f"single transformer output hidden_states: {hidden_states.shape} bbox_hidden_states: {bbox_hidden_states.shape}")
 
-            # controlnet residual
+                # pulid compute
+                # split
+                encoder_hidden_states, hidden_states = hidden_states[:, :encoder_hidden_states.shape[1],
+                                                       ...], hidden_states[:, encoder_hidden_states.shape[1]:, ...]
+                if id_embeddings is not None and index_block % self.pulid_single_interval == 0:
+                    for id_weight, id_embedding, id_mask in zip(id_weights, id_embeddings, id_masks):
+                        mask_pulid_states = id_weight[0] * self.pulid_ca[ca_idx](id_embedding, hidden_states) * id_mask
+                        print(f"single transformer mask_pulid_states shape:{mask_pulid_states.shape}")
+                        hidden_states = hidden_states + mask_pulid_states
+                        print(
+                            f"id_embedding shape:{id_embedding.shape} hidden_states shape:{hidden_states.shape}, id_mask shape:{id_mask.shape}")
+                    ca_idx += 1
+
+                # merge
+                hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
+
+
+        # controlnet residual
             if controlnet_single_block_samples is not None:
                 interval_control = len(self.single_transformer_blocks) / len(controlnet_single_block_samples)
                 interval_control = int(np.ceil(interval_control))

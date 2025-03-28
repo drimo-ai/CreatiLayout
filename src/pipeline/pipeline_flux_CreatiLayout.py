@@ -14,7 +14,7 @@
 
 import inspect
 from typing import Any, Callable, Dict, List, Optional, Union
-
+from PIL import Image
 import numpy as np
 import torch
 from transformers import (
@@ -42,6 +42,25 @@ from diffusers.utils import (
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.pipelines.flux.pipeline_output import FluxPipelineOutput
+
+import torch.nn as nn
+import insightface
+import gc
+import cv2
+from safetensors.torch import load_file
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms.functional import normalize, resize
+from huggingface_hub import hf_hub_download, snapshot_download
+from insightface.app import FaceAnalysis
+from facexlib.parsing import init_parsing_model
+from facexlib.utils.face_restoration_helper import FaceRestoreHelper
+import sys
+sys.path.append('/root/autodl-tmp/CreateLayout/PuLID')
+from pulid.encoders_transformer import IDFormer, PerceiverAttentionCA
+from pulid.utils import img2tensor, tensor2img, resize_numpy_image_long
+from eva_clip import create_model_and_transforms
+from eva_clip.constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
+
 
 
 if is_torch_xla_available():
@@ -206,6 +225,7 @@ class CreatiLayoutFluxPipeline(
             image_encoder=image_encoder,
             feature_extractor=feature_extractor,
         )
+        print(f"vae.config {self.vae.config}")
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if getattr(self, "vae", None) else 8
         # Flux latents are turned into 2x2 patches and packed. This means the latent width and height has to be divisible
         # by the patch size. So the vae scale factor is multiplied by the patch size to account for this
@@ -214,6 +234,176 @@ class CreatiLayoutFluxPipeline(
             self.tokenizer.model_max_length if hasattr(self, "tokenizer") and self.tokenizer is not None else 77
         )
         self.default_sample_size = 128
+
+    def load_pulid_models(self):
+        double_interval = 2
+        single_interval = 4
+        num_ca = 0
+        onnx_provider = 'gpu'
+
+        # init encoder
+        self.pulid_encoder = IDFormer().to(self.device, self.transformer.dtype)
+
+        num_ca = 19 // double_interval + 38 // single_interval
+        if 19 % double_interval != 0:
+            num_ca += 1
+        if 38 % single_interval != 0:
+            num_ca += 1
+        self.pulid_ca = nn.ModuleList([
+            PerceiverAttentionCA().to(self.device, self.transformer.dtype) for _ in range(num_ca)
+        ])
+
+        self.transformer.pulid_ca = self.pulid_ca
+        self.transformer.pulid_double_interval = double_interval
+        self.transformer.pulid_single_interval = single_interval
+
+        # preprocessors
+        # face align and parsing
+        self.face_helper = FaceRestoreHelper(
+            upscale_factor=1,
+            face_size=512,
+            crop_ratio=(1, 1),
+            det_model='retinaface_resnet50',
+            save_ext='png',
+            device=self.device,
+        )
+        self.face_helper.face_parse = None
+        self.face_helper.face_parse = init_parsing_model(model_name='bisenet', device=self.device)
+        # clip-vit backbone
+        model, _, _ = create_model_and_transforms('EVA02-CLIP-L-14-336', 'eva_clip', force_custom_clip=True)
+        model = model.visual
+        self.clip_vision_model = model.to(self.device, dtype=self.transformer.dtype)
+        eva_transform_mean = getattr(self.clip_vision_model, 'image_mean', OPENAI_DATASET_MEAN)
+        eva_transform_std = getattr(self.clip_vision_model, 'image_std', OPENAI_DATASET_STD)
+        if not isinstance(eva_transform_mean, (list, tuple)):
+            eva_transform_mean = (eva_transform_mean,) * 3
+        if not isinstance(eva_transform_std, (list, tuple)):
+            eva_transform_std = (eva_transform_std,) * 3
+        self.eva_transform_mean = eva_transform_mean
+        self.eva_transform_std = eva_transform_std
+        # antelopev2
+        snapshot_download('DIAMONIK7777/antelopev2', local_dir='models/antelopev2')
+        providers = ['CPUExecutionProvider'] if onnx_provider == 'cpu' \
+            else ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        self.app = FaceAnalysis(name='antelopev2', root='.', providers=providers)
+        self.app.prepare(ctx_id=0, det_size=(640, 640))
+        self.handler_ante = insightface.model_zoo.get_model('models/antelopev2/glintr100.onnx',
+                                                            providers=providers)
+        self.handler_ante.prepare(ctx_id=0)
+
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # self.load_pretrain()
+
+        # other configs
+        self.debug_img_list = []
+
+    def load_pretrain(self, pretrain_path=None):
+        hf_hub_download('guozinan/PuLID', 'pulid_flux_v0.9.1.safetensors', local_dir='models')
+        ckpt_path = 'models/pulid_flux_v0.9.1.safetensors'
+        if pretrain_path is not None:
+            ckpt_path = pretrain_path
+        state_dict = load_file(ckpt_path)
+        state_dict_dict = {}
+        for k, v in state_dict.items():
+            module = k.split('.')[0]
+            state_dict_dict.setdefault(module, {})
+            new_k = k[len(module) + 1:]
+            state_dict_dict[module][new_k] = v
+
+        for module in state_dict_dict:
+            print(f'loading from {module}')
+            getattr(self, module).load_state_dict(state_dict_dict[module], strict=True)
+
+        del state_dict
+        del state_dict_dict
+
+    def to_gray(self, img):
+        x = 0.299 * img[:, 0:1] + 0.587 * img[:, 1:2] + 0.114 * img[:, 2:3]
+        x = x.repeat(1, 3, 1, 1)
+        return x
+
+    @torch.no_grad()
+    def get_id_embedding(self, image, cal_uncond=False):
+        """
+        Args:
+            image: path
+        """
+        image = np.array(Image.open(image))
+        image = resize_numpy_image_long(image, 1024)
+
+        self.face_helper.clean_all()
+        self.debug_img_list = []
+        image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        # get antelopev2 embedding
+        face_info = self.app.get(image_bgr)
+        if len(face_info) > 0:
+            face_info = sorted(face_info, key=lambda x: (x['bbox'][2] - x['bbox'][0]) * (x['bbox'][3] - x['bbox'][1]))[
+                -1
+            ]  # only use the maximum face
+            id_ante_embedding = face_info['embedding']
+            self.debug_img_list.append(
+                image[
+                int(face_info['bbox'][1]): int(face_info['bbox'][3]),
+                int(face_info['bbox'][0]): int(face_info['bbox'][2]),
+                ]
+            )
+        else:
+            id_ante_embedding = None
+
+        # using facexlib to detect and align face
+        self.face_helper.read_image(image_bgr)
+        self.face_helper.get_face_landmarks_5(only_center_face=True)
+        self.face_helper.align_warp_face()
+        if len(self.face_helper.cropped_faces) == 0:
+            raise RuntimeError('facexlib align face fail')
+        align_face = self.face_helper.cropped_faces[0]
+        # incase insightface didn't detect face
+        if id_ante_embedding is None:
+            print('fail to detect face using insightface, extract embedding on align face')
+            id_ante_embedding = self.handler_ante.get_feat(align_face)
+
+        id_ante_embedding = torch.from_numpy(id_ante_embedding).to(self.device, self.transformer.dtype)
+        if id_ante_embedding.ndim == 1:
+            id_ante_embedding = id_ante_embedding.unsqueeze(0)
+
+        # parsing
+        input = img2tensor(align_face, bgr2rgb=True).unsqueeze(0) / 255.0
+        input = input.to(self.device)
+        parsing_out = self.face_helper.face_parse(normalize(input, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]))[0]
+        parsing_out = parsing_out.argmax(dim=1, keepdim=True)
+        bg_label = [0, 16, 18, 7, 8, 9, 14, 15]
+        bg = sum(parsing_out == i for i in bg_label).bool()
+        white_image = torch.ones_like(input)
+        # only keep the face features
+        face_features_image = torch.where(bg, white_image, self.to_gray(input))
+        self.debug_img_list.append(tensor2img(face_features_image, rgb2bgr=False))
+
+        # transform img before sending to eva-clip-vit
+        face_features_image = resize(face_features_image, self.clip_vision_model.image_size, InterpolationMode.BICUBIC)
+        face_features_image = normalize(face_features_image, self.eva_transform_mean, self.eva_transform_std)
+        id_cond_vit, id_vit_hidden = self.clip_vision_model(
+            face_features_image.to(self.transformer.dtype), return_all_features=False, return_hidden=True, shuffle=False
+        )
+        id_cond_vit_norm = torch.norm(id_cond_vit, 2, 1, True)
+        id_cond_vit = torch.div(id_cond_vit, id_cond_vit_norm)
+
+        id_cond = torch.cat([id_ante_embedding, id_cond_vit], dim=-1)
+
+        id_embedding = self.pulid_encoder(id_cond, id_vit_hidden)
+
+        if not cal_uncond:
+            return id_embedding, None
+
+        id_uncond = torch.zeros_like(id_cond)
+        id_vit_hidden_uncond = []
+        for layer_idx in range(0, len(id_vit_hidden)):
+            id_vit_hidden_uncond.append(torch.zeros_like(id_vit_hidden[layer_idx]))
+        uncond_id_embedding = self.pulid_encoder(id_uncond, id_vit_hidden_uncond)
+
+        return id_embedding, uncond_id_embedding
+
 
     def _get_t5_prompt_embeds(
         self,
@@ -241,8 +431,8 @@ class CreatiLayoutFluxPipeline(
             return_overflowing_tokens=False,
             return_tensors="pt",
         )
-        text_input_ids = text_inputs.input_ids
-        untruncated_ids = self.tokenizer_2(prompt, padding="longest", return_tensors="pt").input_ids
+        text_input_ids = text_inputs.input_ids #[1,512]
+        untruncated_ids = self.tokenizer_2(prompt, padding="longest", return_tensors="pt").input_ids #[1,128]
 
         if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
             removed_text = self.tokenizer_2.batch_decode(untruncated_ids[:, self.tokenizer_max_length - 1 : -1])
@@ -257,7 +447,7 @@ class CreatiLayoutFluxPipeline(
         dtype = self.text_encoder_2.dtype
         prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
 
-        _, seq_len, _ = prompt_embeds.shape
+        _, seq_len, _ = prompt_embeds.shape#[1,512,4096]
 
         # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
@@ -300,7 +490,7 @@ class CreatiLayoutFluxPipeline(
         prompt_embeds = self.text_encoder(text_input_ids.to(device), output_hidden_states=False)
 
         # Use pooled output of CLIPTextModel
-        prompt_embeds = prompt_embeds.pooler_output
+        prompt_embeds = prompt_embeds.pooler_output  # [1,768]
         prompt_embeds = prompt_embeds.to(dtype=self.text_encoder.dtype, device=device)
 
         # duplicate text embeddings for each generation per prompt, using mps friendly method
@@ -384,7 +574,7 @@ class CreatiLayoutFluxPipeline(
                 unscale_lora_layers(self.text_encoder_2, lora_scale)
 
         dtype = self.text_encoder.dtype if self.text_encoder is not None else self.transformer.dtype
-        text_ids = torch.zeros(prompt_embeds.shape[1], 3).to(device=device, dtype=dtype)
+        text_ids = torch.zeros(prompt_embeds.shape[1], 3).to(device=device, dtype=dtype)#[512,3]
 
         return prompt_embeds, pooled_prompt_embeds, text_ids
 
@@ -607,7 +797,7 @@ class CreatiLayoutFluxPipeline(
 
         latent_image_ids = self._prepare_latent_image_ids(batch_size, height // 2, width // 2, device, dtype)
 
-        return latents, latent_image_ids
+        return latents, latent_image_ids #[1,1024,64]  [1024,4]
 
     @property
     def guidance_scale(self):
@@ -743,7 +933,7 @@ class CreatiLayoutFluxPipeline(
 
         height = height or self.default_sample_size * self.vae_scale_factor
         width = width or self.default_sample_size * self.vae_scale_factor
-
+        print(f"height:{height},width:{width},sample_size:{self.default_sample_size}, vae_scale:{self.vae_scale_factor}")
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
             prompt,
@@ -812,7 +1002,30 @@ class CreatiLayoutFluxPipeline(
                 lora_scale=lora_scale,
             )
 
-        # 4. Prepare latent variables
+            print(f"height:{height},width:{width}")
+            H, W = height // (self.vae_scale_factor*2), width // (self.vae_scale_factor*2)
+
+            print(f"h:{H},w:{W},sample_size:{self.default_sample_size}, vae_scale:{self.vae_scale_factor}")
+            ## prepare id embeddings
+            if joint_attention_kwargs is not None and 'id_image_paths' in joint_attention_kwargs:
+                id_embeddings = []
+                for id_image_path in joint_attention_kwargs['id_image_paths']:
+                    id_embedding, _ = self.get_id_embedding(id_image_path, cal_uncond=False)
+                    id_embeddings.append(id_embedding)
+                    print("get_id_embedding,embedding shape",id_embedding.shape)
+                    #print("pass")
+                id_masks = []
+                for id_mask in joint_attention_kwargs['id_masks']:
+                    print(f"w:{W} h:{H},id_mask:",id_mask)
+                    id_mask = torch.nn.functional.interpolate(id_mask[None, None, :, :], (H, W),
+                                                              mode='nearest-exact').flatten()
+                    id_masks.append(id_mask)
+                    #print(",id_mask shape",id_mask.shape)
+            else:
+                id_embeddings = None
+                id_masks = None
+
+        # 4. Prepare latent variables  #[1,1024,64]  [1024,4]
         num_channels_latents = self.transformer.config.in_channels // 4
         latents, latent_image_ids = self.prepare_latents(
             batch_size * num_images_per_prompt,
@@ -883,9 +1096,9 @@ class CreatiLayoutFluxPipeline(
 
         max_objs = 10
         n_objs = len(bbox_raw)
-        boxes = torch.zeros(max_objs, 4, device=device, dtype=latents.dtype)
+        boxes = torch.zeros(max_objs, 4, device=device, dtype=latents.dtype)#[10,4]
         boxes[:n_objs] = torch.tensor(bbox_raw, device=device, dtype=latents.dtype) 
-        boxes = boxes.unsqueeze(0).to(device=device, dtype=latents.dtype).repeat_interleave(batch_size, dim=0)
+        boxes = boxes.unsqueeze(0).to(device=device, dtype=latents.dtype).repeat_interleave(batch_size, dim=0)#[1,10,4]
         
         bbox_masks = torch.zeros(max_objs, device=device, dtype=latents.dtype)
         bbox_masks[:n_objs] = 1
@@ -895,7 +1108,7 @@ class CreatiLayoutFluxPipeline(
         bbox_text_embeddings = torch.zeros(
             max_objs,77,4096, device=device, dtype=latents.dtype
         ) # unet_config.cross_attention_dim   (N, 77, 4096)
-
+        #bbox_prompt_embeds [N,77,4096]
         bbox_prompt_embeds = self._get_t5_prompt_embeds(
             prompt=bbox_phrases,
             num_images_per_prompt=num_images_per_prompt,
@@ -918,7 +1131,12 @@ class CreatiLayoutFluxPipeline(
         neg_layout_kwargs = {
         "layout": {"boxes": boxes, "positive_embeddings": bbox_text_embeddings, "bbox_masks": neg_bbox_masks}
         } 
-        
+
+        if id_embeddings is not None and len(id_embeddings)> 0:
+            self._joint_attention_kwargs["id_embeddings"] = id_embeddings
+            self._joint_attention_kwargs["id_weights"] = joint_attention_kwargs['id_weights'] if 'id_weights' in joint_attention_kwargs else None,
+            self._joint_attention_kwargs["id_masks"] = id_masks
+
 
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
