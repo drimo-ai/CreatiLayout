@@ -1,6 +1,6 @@
 # CreatiLayout-PuLID
-
-
+<img src='assets/figures/pulid_test_lecun.png' width='100%' />
+<img src='assets/figures/pulid_test_musk.png' width='100%' />
 <img src='assets/figures/teaser.jpg' width='100%' />
 
 <br>
