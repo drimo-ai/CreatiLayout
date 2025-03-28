@@ -2,6 +2,7 @@
 - **2025-3-28**: forked from HuiZhang0812/CreatiLayout and Add pulid functionality to it
 <img src='assets/figures/pulid_test_lecun.png' width='100%' />
 <img src='assets/figures/pulid_test_musk.png' width='100%' />
+# CreatiLayout
 <img src='assets/figures/teaser.jpg' width='100%' />
 
 <br>
