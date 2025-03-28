@@ -1,4 +1,4 @@
-# CreatiLayout
+# CreatiLayout-PuLID
 
 
 <img src='assets/figures/teaser.jpg' width='100%' />
