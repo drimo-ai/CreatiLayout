@@ -1,4 +1,4 @@
-# CreatiLayout
+# CreatiLayout-PuLID
 
 
 <img src='assets/figures/teaser.jpg' width='100%' />
@@ -37,6 +37,7 @@ CreatiLayout is a layout-to-image framework for Diffusion Transformer models, of
 **Layout Designer** 🎨: A layout planner leveraging the power of large language models to convert various user inputs (e.g., center points, masks, scribbles) into standardized layouts. 
 
 ## 🔥 News
+- **2025-3-28**: forked from HuiZhang0812/CreatiLayout and Add pulid functionality to it
 - **2025-3-10**: We release **CreatiLayout-FLUX**, which empowers FLUX.1-dev for layout-to-image generation and achieves more precise rendering of spatial relationships and attributes.
 - **2025-1-30**: We propose **CreatiLayout-LoRA**, which achieves layout control with fewer additional parameters.
 
